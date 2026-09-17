@@ -27,7 +27,10 @@
         <h4>Available Rooms</h4>
         <div v-if="Object.keys(rooms).length === 0">No rooms available yet.</div>
         <div v-for="(room, roomId) in rooms" :key="roomId" class="room-card">
-          <span><strong>{{ room.name }}</strong></span>
+          <div>
+            <strong>{{ room.name }}</strong>
+            <small v-if="room.createdBy === username" class="owner-badge"> (You created this)</small>
+          </div>
           <div class="join-box">
             <input 
               v-model="roomInputPasswords[roomId]" 
@@ -36,6 +39,13 @@
               @keyup.enter="joinRoom(roomId, room.password)"
             />
             <button @click="joinRoom(roomId, room.password)">Join</button>
+            <button 
+              v-if="room.createdBy === username" 
+              class="delete-btn" 
+              @click="deleteRoom(roomId)"
+            >
+              Delete
+            </button>
           </div>
         </div>
       </div>
@@ -44,23 +54,69 @@
     <!-- Step C: Active Chat Room -->
     <div v-else>
       <div class="chat-header">
-        <h3>Room: {{ currentRoom.name }}</h3>
-        <button class="leave-btn" @click="leaveRoom">Leave Room</button>
+        <div>
+          <h3>Room: {{ currentRoom.name }}</h3>
+          <small v-if="currentRoom.createdBy === username" class="owner-badge">Room Owner</small>
+        </div>
+        <div class="header-actions">
+          <button 
+            v-if="currentRoom.createdBy === username" 
+            class="clear-btn" 
+            @click="clearChat"
+          >
+            Clear Chat
+          </button>
+          <button class="leave-btn" @click="leaveRoom">Leave Room</button>
+        </div>
       </div>
 
+      <!-- Messages View -->
       <div class="messages">
         <div 
           v-for="msg in messages" 
           :key="msg.id" 
           :class="['message', msg.user === username ? 'own' : '']"
         >
-          <strong>{{ msg.user }}:</strong> {{ msg.text }}
+          <strong>{{ msg.user }}:</strong>
+          <span v-if="msg.text"> {{ msg.text }}</span>
+          
+          <!-- File / Image Display para sa Kachat -->
+          <div v-if="msg.file" class="file-attachment">
+            <!-- Kapag Picture: Makikita agad sa chat -->
+            <img 
+              v-if="msg.file.type && msg.file.type.startsWith('image/')" 
+              :src="msg.file.data" 
+              class="chat-image" 
+              alt="Shared image"
+            />
+            <!-- Kapag ibang File (PDF, DOCX, ZIP): Pwedeng I-download -->
+            <a 
+              v-else 
+              :href="msg.file.data" 
+              :download="msg.file.name" 
+              class="file-link"
+            >
+              📄 Download {{ msg.file.name }}
+            </a>
+          </div>
         </div>
       </div>
 
-      <div class="input-box">
-        <input v-model="newMessage" placeholder="Type a message..." @keyup.enter="sendMessage" />
-        <button @click="sendMessage">Send</button>
+      <!-- Input Box & File Upload -->
+      <div class="input-container">
+        <div v-if="selectedFile" class="file-preview">
+          <span>Attached: {{ selectedFile.name }}</span>
+          <button class="remove-file" @click="selectedFile = null">✕</button>
+        </div>
+        
+        <div class="input-box">
+          <label class="file-label">
+            📎
+            <input type="file" @change="handleFileUpload" class="file-input" />
+          </label>
+          <input v-model="newMessage" placeholder="Type a message..." @keyup.enter="sendMessage" />
+          <button @click="sendMessage">Send</button>
+        </div>
       </div>
     </div>
   </div>
@@ -68,20 +124,21 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue';
-import { db } from '../firebase';
-import { ref as dbRef, push, onValue, off } from 'firebase/database';
+import { db } from '../firebase'; // Import db lang mula sa firebase.js
+import { ref as dbRef, push, onValue, off, remove, set } from 'firebase/database';
 
 const username = ref('');
 const tempName = ref('');
 const newMessage = ref('');
 const messages = ref([]);
 
-// Room state
+// Room State
 const rooms = ref({});
 const currentRoom = ref(null);
 const newRoomName = ref('');
 const newRoomPassword = ref('');
 const roomInputPasswords = ref({});
+const selectedFile = ref(null);
 
 let messagesListener = null;
 
@@ -91,7 +148,6 @@ const setUsername = () => {
   }
 };
 
-// Create a new room in Firebase under `/rooms`
 const createRoom = () => {
   if (!newRoomName.value.trim() || !newRoomPassword.value.trim()) {
     alert('Both Room Name and Password are required!');
@@ -102,26 +158,40 @@ const createRoom = () => {
   const newRoomRef = push(roomsRef, {
     name: newRoomName.value.trim(),
     password: newRoomPassword.value.trim(),
+    createdBy: username.value,
     createdAt: Date.now()
   });
 
-  // Automatically join the newly created room
-  listenToRoomMessages(newRoomRef.key, newRoomName.value.trim());
+  listenToRoomMessages(newRoomRef.key, newRoomName.value.trim(), username.value);
   newRoomName.value = '';
   newRoomPassword.value = '';
 };
 
-// Join room with password check
 const joinRoom = (roomId, correctPassword) => {
   const enteredPassword = roomInputPasswords.value[roomId];
   if (enteredPassword === correctPassword) {
-    listenToRoomMessages(roomId, rooms.value[roomId].name);
+    const room = rooms.value[roomId];
+    listenToRoomMessages(roomId, room.name, room.createdBy);
   } else {
     alert('Incorrect password!');
   }
 };
 
-// Detach room listener and leave
+const deleteRoom = (roomId) => {
+  if (confirm('Are you sure you want to delete this room? All messages will be lost.')) {
+    const roomRef = dbRef(db, `rooms/${roomId}`);
+    remove(roomRef);
+  }
+};
+
+const clearChat = () => {
+  if (!currentRoom.value) return;
+  if (confirm('Are you sure you want to clear all messages in this room?')) {
+    const messagesRef = dbRef(db, `rooms/${currentRoom.value.id}/messages`);
+    set(messagesRef, null);
+  }
+};
+
 const leaveRoom = () => {
   if (currentRoom.value && messagesListener) {
     const messagesRef = dbRef(db, `rooms/${currentRoom.value.id}/messages`);
@@ -129,11 +199,11 @@ const leaveRoom = () => {
   }
   currentRoom.value = null;
   messages.value = [];
+  selectedFile.value = null;
 };
 
-// Subscribe to messages under `/rooms/<roomId>/messages`
-const listenToRoomMessages = (roomId, roomName) => {
-  currentRoom.value = { id: roomId, name: roomName };
+const listenToRoomMessages = (roomId, roomName, createdBy) => {
+  currentRoom.value = { id: roomId, name: roomName, createdBy };
   const messagesRef = dbRef(db, `rooms/${roomId}/messages`);
   
   messagesListener = onValue(messagesRef, (snapshot) => {
@@ -148,20 +218,50 @@ const listenToRoomMessages = (roomId, roomName) => {
   });
 };
 
-const sendMessage = () => {
-  if (!newMessage.value.trim() || !currentRoom.value) return;
+// Handle File Upload (Up to 10MB Base64)
+const handleFileUpload = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
 
-  const messagesRef = dbRef(db, `rooms/${currentRoom.value.id}/messages`);
-  push(messagesRef, {
-    user: username.value,
-    text: newMessage.value,
-    timestamp: Date.now()
-  });
+  const MAX_SIZE = 10 * 1024 * 1024; // 10MB Max Limit
+  if (file.size > MAX_SIZE) {
+    alert('File size exceeds 10MB limit. Please select a smaller file.');
+    e.target.value = '';
+    return;
+  }
 
-  newMessage.value = '';
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    selectedFile.value = {
+      name: file.name,
+      type: file.type,
+      data: event.target.result // Base64 string
+    };
+  };
+  reader.readAsDataURL(file);
 };
 
-// Load available rooms on mount
+// Send Message
+const sendMessage = () => {
+  if ((!newMessage.value.trim() && !selectedFile.value) || !currentRoom.value) return;
+
+  const messagesRef = dbRef(db, `rooms/${currentRoom.value.id}/messages`);
+  const payload = {
+    user: username.value,
+    text: newMessage.value.trim(),
+    timestamp: Date.now()
+  };
+
+  if (selectedFile.value) {
+    payload.file = selectedFile.value;
+  }
+
+  push(messagesRef, payload);
+
+  newMessage.value = '';
+  selectedFile.value = null;
+};
+
 onMounted(() => {
   const roomsRef = dbRef(db, 'rooms');
   onValue(roomsRef, (snapshot) => {
@@ -169,7 +269,6 @@ onMounted(() => {
   });
 });
 
-// Cleanup listeners on unmount
 onUnmounted(() => {
   leaveRoom();
   const roomsRef = dbRef(db, 'rooms');
@@ -179,10 +278,10 @@ onUnmounted(() => {
 
 <style scoped>
 .chat-container { max-width: 500px; margin: 40px auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
-.messages { height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; border-radius: 4px; display: flex; flex-direction: column; }
-.message { margin-bottom: 8px; text-align: left; }
+.messages { height: 320px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; border-radius: 4px; display: flex; flex-direction: column; }
+.message { margin-bottom: 12px; text-align: left; }
 .own { text-align: right; color: #007bff; }
-.input-box, .user-input { display: flex; gap: 8px; }
+.input-box, .user-input { display: flex; gap: 8px; align-items: center; }
 input { flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
 button { padding: 8px 16px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
 
@@ -190,6 +289,19 @@ button { padding: 8px 16px; background-color: #007bff; color: white; border: non
 .room-card { display: flex; justify-content: space-between; align-items: center; padding: 8px; border: 1px solid #eee; margin-bottom: 8px; border-radius: 4px; }
 .join-box { display: flex; gap: 4px; }
 .chat-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.leave-btn { background-color: #dc3545; }
+.header-actions { display: flex; gap: 6px; }
+
+.delete-btn { background-color: #dc3545; padding: 4px 8px; font-size: 12px; }
+.clear-btn { background-color: #ffc107; color: #000; }
+.leave-btn { background-color: #6c757d; }
+.owner-badge { font-size: 11px; color: #28a745; font-weight: bold; }
+
+.file-label { cursor: pointer; font-size: 18px; padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+.file-input { display: none; }
+.chat-image { max-width: 200px; max-height: 200px; border-radius: 4px; margin-top: 6px; display: block; }
+.file-link { display: inline-block; margin-top: 4px; word-break: break-all; color: #007bff; font-weight: bold; text-decoration: underline; }
+.input-container { display: flex; flex-direction: column; gap: 6px; }
+.file-preview { font-size: 12px; background: #f0f0f0; padding: 4px 8px; border-radius: 4px; display: flex; justify-content: space-between; }
+.remove-file { background: none; border: none; color: red; cursor: pointer; padding: 0; }
 hr { margin: 15px 0; border: 0; border-top: 1px solid #ddd; }
 </style>
