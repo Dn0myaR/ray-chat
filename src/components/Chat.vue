@@ -1,6 +1,6 @@
 <template>
   <div class="chat-container">
-    <h2>Ooooppss</h2>
+    <h2>Ooooppss!!</h2>
 
     <!-- Step A: Enter Username -->
     <div v-if="!username" class="user-input">
