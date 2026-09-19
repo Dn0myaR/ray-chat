@@ -187,34 +187,45 @@ let initialRoomLoad = true;
 // Request Permission sa Android
 const requestNotificationPermission = async () => {
   try {
-    // I-check muna kung native platform (Android/iOS) bago mag-request
     if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+      // 1. Humingi ng permiso sa user
       const status = await LocalNotifications.requestPermissions();
-      if (status.display !== 'granted') {
-        console.log('Notification permission denied');
+      
+      if (status.display === 'granted') {
+        // 2. Gumawa ng Android Notification Channel (Required sa Android 8+)
+        await LocalNotifications.createChannel({
+          id: 'chat_messages',
+          name: 'Chat Messages',
+          description: 'Notifications for new chat messages',
+          importance: 5, // 5 = High Importance (Pop-up banner sa ibabaw)
+          visibility: 1,
+          vibration: true
+        });
       }
     }
   } catch (e) {
-    console.log('LocalNotifications not supported on web');
+    console.log('Notification setup error:', e);
   }
 };
 
 // Trigger Notification Function
 const triggerNotification = async (sender, text) => {
   try {
-    await LocalNotifications.schedule({
-      notifications: [
-        {
-          title: `${sender} (${currentRoom.value.name})`,
-          body: text || 'Sent an attachment',
-          id: Date.now(),
-          schedule: { at: new Date(Date.now() + 100) },
-          sound: null,
-          actionTypeId: '',
-          extra: null
-        }
-      ]
-    });
+    if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            title: `${sender} (${currentRoom.value.name})`,
+            body: text || 'Sent an attachment',
+            id: Date.now(),
+            channelId: 'chat_messages', // Dapat tumugma sa niregister na channel ID
+            schedule: { at: new Date(Date.now() + 100) },
+            actionTypeId: '',
+            extra: null
+          }
+        ]
+      });
+    }
   } catch (e) {
     console.log('Notification trigger error:', e);
   }
