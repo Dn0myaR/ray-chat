@@ -152,6 +152,7 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import { db } from '../firebase';
 import { ref as dbRef, push, onValue, off, remove, set, get } from 'firebase/database';
+import { LocalNotifications } from '@capacitor/local-notifications';
 
 // User & Auth State
 const currentUser = ref(null);
@@ -181,6 +182,43 @@ const roomInputPasswords = ref({});
 const selectedFile = ref(null);
 
 let messagesListener = null;
+let initialRoomLoad = true;
+
+// Request Permission sa Android
+const requestNotificationPermission = async () => {
+  try {
+    // I-check muna kung native platform (Android/iOS) bago mag-request
+    if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+      const status = await LocalNotifications.requestPermissions();
+      if (status.display !== 'granted') {
+        console.log('Notification permission denied');
+      }
+    }
+  } catch (e) {
+    console.log('LocalNotifications not supported on web');
+  }
+};
+
+// Trigger Notification Function
+const triggerNotification = async (sender, text) => {
+  try {
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          title: `${sender} (${currentRoom.value.name})`,
+          body: text || 'Sent an attachment',
+          id: Date.now(),
+          schedule: { at: new Date(Date.now() + 100) },
+          sound: null,
+          actionTypeId: '',
+          extra: null
+        }
+      ]
+    });
+  } catch (e) {
+    console.log('Notification trigger error:', e);
+  }
+};
 
 // --- User Registration ---
 const handleRegister = async () => {
@@ -190,7 +228,6 @@ const handleRegister = async () => {
     return;
   }
 
-  // Check if username already exists in Firebase
   const userRef = dbRef(db, `users/${uName}`);
   const snapshot = await get(userRef);
 
@@ -204,13 +241,12 @@ const handleRegister = async () => {
     firstName: regForm.value.firstName.trim(),
     lastName: regForm.value.lastName.trim(),
     email: regForm.value.email.trim() || 'N/A',
-    password: regForm.value.password.trim() // Note: Store as plaintext for simple setup
+    password: regForm.value.password.trim()
   };
 
   await set(userRef, userData);
   alert('Account created successfully! You are now logged in.');
 
-  // Save session and log in
   loginUserSession(userData);
 };
 
@@ -239,10 +275,11 @@ const handleLogin = async () => {
   }
 };
 
-// Helper: Save Session to LocalStorage
+// Helper: Save Session
 const loginUserSession = (userData) => {
   currentUser.value = userData;
   localStorage.setItem('ray_chat_user', JSON.stringify(userData));
+  requestNotificationPermission();
 };
 
 // --- User Logout ---
@@ -305,14 +342,12 @@ const leaveRoom = () => {
   currentRoom.value = null;
   messages.value = [];
   selectedFile.value = null;
-  
-  // Burahin ang saved room kapag kusa mong pinoz-pindot ang "Leave Room"
   localStorage.removeItem('ray_chat_active_room');
 };
+
 const listenToRoomMessages = (roomId, roomName, createdBy, password = '') => {
   currentRoom.value = { id: roomId, name: roomName, createdBy, password };
   
-  // I-save ang kasalukuyang room sa localStorage
   localStorage.setItem('ray_chat_active_room', JSON.stringify({
     id: roomId,
     name: roomName,
@@ -348,7 +383,7 @@ const handleFileUpload = (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  const MAX_SIZE = 10 * 1024 * 1024; // 10MB Limit
+  const MAX_SIZE = 10 * 1024 * 1024; // 10MB
   if (file.size > MAX_SIZE) {
     alert('File size exceeds 10MB limit. Please select a smaller file.');
     e.target.value = '';
@@ -393,15 +428,14 @@ onMounted(() => {
       currentUser.value = JSON.parse(savedUser);
       requestNotificationPermission();
 
-      // Subukang i-rejoin ang huling nakasave na room
       const savedRoom = localStorage.getItem('ray_chat_active_room');
       if (savedRoom) {
         const roomData = JSON.parse(savedRoom);
         listenToRoomMessages(roomData.id, roomData.name, roomData.createdBy, roomData.password);
       }
     } catch (e) {
-      localStorage.removeItem('ray_chat_user');
-      localStorage.removeItem('ray_chat_active_room');
+      console.error("Error restoring session:", e);
+      // Wag ide-delete ang storage dito para protektado sa refresh!
     }
   }
 
