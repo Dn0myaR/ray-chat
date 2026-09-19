@@ -156,7 +156,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 
 // User & Auth State
 const currentUser = ref(null);
-const authMode = ref('login'); // 'login' or 'register'
+const authMode = ref('login');
 
 const regForm = ref({
   username: '',
@@ -184,47 +184,55 @@ const selectedFile = ref(null);
 let messagesListener = null;
 let initialRoomLoad = true;
 
-// Request Permission sa Android
+// Request Permission
 const requestNotificationPermission = async () => {
   try {
+    // 1. Native Capacitor Permission
     if (window.Capacitor && window.Capacitor.isNativePlatform()) {
-      // 1. Humingi ng permiso sa user
       const status = await LocalNotifications.requestPermissions();
-      
       if (status.display === 'granted') {
-        // 2. Gumawa ng Android Notification Channel (Required sa Android 8+)
         await LocalNotifications.createChannel({
           id: 'chat_messages',
           name: 'Chat Messages',
           description: 'Notifications for new chat messages',
-          importance: 5, // 5 = High Importance (Pop-up banner sa ibabaw)
+          importance: 5,
           visibility: 1,
           vibration: true
         });
       }
+    } else if ('Notification' in window && Notification.permission !== 'granted') {
+      // 2. Standard Web Notification Permission
+      await Notification.requestPermission();
     }
   } catch (e) {
     console.log('Notification setup error:', e);
   }
 };
 
-// Trigger Notification Function
+// Trigger Messenger-style Notification
 const triggerNotification = async (sender, text) => {
+  const title = `${sender} (${currentRoom.value ? currentRoom.value.name : 'Chat'})`;
+  const bodyText = text || 'Sent an attachment';
+
   try {
+    // Subukan muna gamit ang Capacitor LocalNotifications (Android Native)
     if (window.Capacitor && window.Capacitor.isNativePlatform()) {
       await LocalNotifications.schedule({
         notifications: [
           {
-            title: `${sender} (${currentRoom.value.name})`,
-            body: text || 'Sent an attachment',
+            title: title,
+            body: bodyText,
             id: Date.now(),
-            channelId: 'chat_messages', // Dapat tumugma sa niregister na channel ID
-            schedule: { at: new Date(Date.now() + 100) },
+            channelId: 'chat_messages',
+            schedule: { at: new Date(Date.now() + 50) },
             actionTypeId: '',
             extra: null
           }
         ]
       });
+    } else if ('Notification' in window && Notification.permission === 'granted') {
+      // Web Notification Fallback
+      new Notification(title, { body: bodyText });
     }
   } catch (e) {
     console.log('Notification trigger error:', e);
@@ -256,8 +264,7 @@ const handleRegister = async () => {
   };
 
   await set(userRef, userData);
-  alert('Account created successfully! You are now logged in.');
-
+  alert('Account created successfully!');
   loginUserSession(userData);
 };
 
@@ -286,14 +293,12 @@ const handleLogin = async () => {
   }
 };
 
-// Helper: Save Session
 const loginUserSession = (userData) => {
   currentUser.value = userData;
   localStorage.setItem('ray_chat_user', JSON.stringify(userData));
   requestNotificationPermission();
 };
 
-// --- User Logout ---
 const handleLogout = () => {
   leaveRoom();
   currentUser.value = null;
@@ -394,7 +399,7 @@ const handleFileUpload = (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+  const MAX_SIZE = 10 * 1024 * 1024;
   if (file.size > MAX_SIZE) {
     alert('File size exceeds 10MB limit. Please select a smaller file.');
     e.target.value = '';
@@ -446,7 +451,6 @@ onMounted(() => {
       }
     } catch (e) {
       console.error("Error restoring session:", e);
-      // Wag ide-delete ang storage dito para protektado sa refresh!
     }
   }
 
