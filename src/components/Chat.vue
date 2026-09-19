@@ -2,15 +2,43 @@
   <div class="chat-container">
     <h2>Ooooppss!!!</h2>
 
-    <!-- Step A: Enter Username -->
-    <div v-if="!username" class="user-input">
-      <input v-model="tempName" placeholder="Enter your username..." @keyup.enter="setUsername" />
-      <button @click="setUsername">Join Chat</button>
+    <!-- Step A: Auth View (Login / Register) -->
+    <div v-if="!currentUser" class="auth-box">
+      <!-- Toggle Tabs -->
+      <div class="auth-tabs">
+        <button :class="{ active: authMode === 'login' }" @click="authMode = 'login'">Login</button>
+        <button :class="{ active: authMode === 'register' }" @click="authMode = 'register'">Register</button>
+      </div>
+
+      <!-- Register Form -->
+      <form v-if="authMode === 'register'" @submit.prevent="handleRegister" class="auth-form">
+        <h3>Create Account</h3>
+        <input v-model="regForm.username" placeholder="Username (Required)" required />
+        <input v-model="regForm.firstName" placeholder="First Name" required />
+        <input v-model="regForm.lastName" placeholder="Surname" required />
+        <input v-model="regForm.email" type="email" placeholder="Email (Optional)" />
+        <input v-model="regForm.password" type="password" placeholder="Password (Required)" required />
+        <button type="submit">Register</button>
+      </form>
+
+      <!-- Login Form -->
+      <form v-else @submit.prevent="handleLogin" class="auth-form">
+        <h3>Login</h3>
+        <input v-model="loginForm.username" placeholder="Username" required />
+        <input v-model="loginForm.password" type="password" placeholder="Password" required />
+        <button type="submit">Login</button>
+      </form>
     </div>
 
     <!-- Step B: Room Selection / Creation -->
     <div v-else-if="!currentRoom" class="room-selection">
-      <h3>Welcome, {{ username }}!</h3>
+      <div class="user-profile-header">
+        <div>
+          <h3>Welcome, {{ currentUser.firstName }} {{ currentUser.lastName }}!</h3>
+          <small>@{{ currentUser.username }}</small>
+        </div>
+        <button class="logout-btn" @click="handleLogout">Logout</button>
+      </div>
       
       <!-- Create Room -->
       <div class="create-room">
@@ -29,7 +57,7 @@
         <div v-for="(room, roomId) in rooms" :key="roomId" class="room-card">
           <div>
             <strong>{{ room.name }}</strong>
-            <small v-if="room.createdBy === username" class="owner-badge"> (You created this)</small>
+            <small v-if="room.createdBy === currentUser.username" class="owner-badge"> (You created this)</small>
           </div>
           <div class="join-box">
             <input 
@@ -40,7 +68,7 @@
             />
             <button @click="joinRoom(roomId, room.password)">Join</button>
             <button 
-              v-if="room.createdBy === username" 
+              v-if="room.createdBy === currentUser.username" 
               class="delete-btn" 
               @click="deleteRoom(roomId)"
             >
@@ -56,11 +84,11 @@
       <div class="chat-header">
         <div>
           <h3>Room: {{ currentRoom.name }}</h3>
-          <small v-if="currentRoom.createdBy === username" class="owner-badge">Room Owner</small>
+          <small v-if="currentRoom.createdBy === currentUser.username" class="owner-badge">Room Owner</small>
         </div>
         <div class="header-actions">
           <button 
-            v-if="currentRoom.createdBy === username" 
+            v-if="currentRoom.createdBy === currentUser.username" 
             class="clear-btn" 
             @click="clearChat"
           >
@@ -75,21 +103,19 @@
         <div 
           v-for="msg in messages" 
           :key="msg.id" 
-          :class="['message', msg.user === username ? 'own' : '']"
+          :class="['message', msg.user === currentUser.username ? 'own' : '']"
         >
           <strong>{{ msg.user }}:</strong>
           <span v-if="msg.text"> {{ msg.text }}</span>
           
-          <!-- File / Image Display para sa Kachat -->
+          <!-- File / Image Display -->
           <div v-if="msg.file" class="file-attachment">
-            <!-- Kapag Picture: Makikita agad sa chat -->
             <img 
               v-if="msg.file.type && msg.file.type.startsWith('image/')" 
               :src="msg.file.data" 
               class="chat-image" 
               alt="Shared image"
             />
-            <!-- Kapag ibang File (PDF, DOCX, ZIP): Pwedeng I-download -->
             <a 
               v-else 
               :href="msg.file.data" 
@@ -124,15 +150,29 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue';
-import { db } from '../firebase'; // Import db lang mula sa firebase.js
-import { ref as dbRef, push, onValue, off, remove, set } from 'firebase/database';
+import { db } from '../firebase';
+import { ref as dbRef, push, onValue, off, remove, set, get } from 'firebase/database';
 
-const username = ref('');
-const tempName = ref('');
+// User & Auth State
+const currentUser = ref(null);
+const authMode = ref('login'); // 'login' or 'register'
+
+const regForm = ref({
+  username: '',
+  firstName: '',
+  lastName: '',
+  email: '',
+  password: ''
+});
+
+const loginForm = ref({
+  username: '',
+  password: ''
+});
+
+// Room State & Messages
 const newMessage = ref('');
 const messages = ref([]);
-
-// Room State
 const rooms = ref({});
 const currentRoom = ref(null);
 const newRoomName = ref('');
@@ -142,12 +182,77 @@ const selectedFile = ref(null);
 
 let messagesListener = null;
 
-const setUsername = () => {
-  if (tempName.value.trim()) {
-    username.value = tempName.value.trim();
+// --- User Registration ---
+const handleRegister = async () => {
+  const uName = regForm.value.username.trim().toLowerCase();
+  if (!uName || !regForm.value.password.trim()) {
+    alert('Username and Password are required!');
+    return;
+  }
+
+  // Check if username already exists in Firebase
+  const userRef = dbRef(db, `users/${uName}`);
+  const snapshot = await get(userRef);
+
+  if (snapshot.exists()) {
+    alert('Username already taken! Please choose another one.');
+    return;
+  }
+
+  const userData = {
+    username: uName,
+    firstName: regForm.value.firstName.trim(),
+    lastName: regForm.value.lastName.trim(),
+    email: regForm.value.email.trim() || 'N/A',
+    password: regForm.value.password.trim() // Note: Store as plaintext for simple setup
+  };
+
+  await set(userRef, userData);
+  alert('Account created successfully! You are now logged in.');
+
+  // Save session and log in
+  loginUserSession(userData);
+};
+
+// --- User Login ---
+const handleLogin = async () => {
+  const uName = loginForm.value.username.trim().toLowerCase();
+  const pass = loginForm.value.password.trim();
+
+  if (!uName || !pass) {
+    alert('Please enter username and password!');
+    return;
+  }
+
+  const userRef = dbRef(db, `users/${uName}`);
+  const snapshot = await get(userRef);
+
+  if (snapshot.exists()) {
+    const userData = snapshot.val();
+    if (userData.password === pass) {
+      loginUserSession(userData);
+    } else {
+      alert('Incorrect password!');
+    }
+  } else {
+    alert('Username not found!');
   }
 };
 
+// Helper: Save Session to LocalStorage
+const loginUserSession = (userData) => {
+  currentUser.value = userData;
+  localStorage.setItem('ray_chat_user', JSON.stringify(userData));
+};
+
+// --- User Logout ---
+const handleLogout = () => {
+  leaveRoom();
+  currentUser.value = null;
+  localStorage.removeItem('ray_chat_user');
+};
+
+// --- Chat Room Functions ---
 const createRoom = () => {
   if (!newRoomName.value.trim() || !newRoomPassword.value.trim()) {
     alert('Both Room Name and Password are required!');
@@ -158,11 +263,11 @@ const createRoom = () => {
   const newRoomRef = push(roomsRef, {
     name: newRoomName.value.trim(),
     password: newRoomPassword.value.trim(),
-    createdBy: username.value,
+    createdBy: currentUser.value.username,
     createdAt: Date.now()
   });
 
-  listenToRoomMessages(newRoomRef.key, newRoomName.value.trim(), username.value);
+  listenToRoomMessages(newRoomRef.key, newRoomName.value.trim(), currentUser.value.username);
   newRoomName.value = '';
   newRoomPassword.value = '';
 };
@@ -218,12 +323,11 @@ const listenToRoomMessages = (roomId, roomName, createdBy) => {
   });
 };
 
-// Handle File Upload (Up to 10MB Base64)
 const handleFileUpload = (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  const MAX_SIZE = 10 * 1024 * 1024; // 10MB Max Limit
+  const MAX_SIZE = 10 * 1024 * 1024; // 10MB Limit
   if (file.size > MAX_SIZE) {
     alert('File size exceeds 10MB limit. Please select a smaller file.');
     e.target.value = '';
@@ -235,19 +339,18 @@ const handleFileUpload = (e) => {
     selectedFile.value = {
       name: file.name,
       type: file.type,
-      data: event.target.result // Base64 string
+      data: event.target.result
     };
   };
   reader.readAsDataURL(file);
 };
 
-// Send Message
 const sendMessage = () => {
   if ((!newMessage.value.trim() && !selectedFile.value) || !currentRoom.value) return;
 
   const messagesRef = dbRef(db, `rooms/${currentRoom.value.id}/messages`);
   const payload = {
-    user: username.value,
+    user: currentUser.value.username,
     text: newMessage.value.trim(),
     timestamp: Date.now()
   };
@@ -263,6 +366,16 @@ const sendMessage = () => {
 };
 
 onMounted(() => {
+  // Auto-login from localStorage if session exists
+  const savedUser = localStorage.getItem('ray_chat_user');
+  if (savedUser) {
+    try {
+      currentUser.value = JSON.parse(savedUser);
+    } catch (e) {
+      localStorage.removeItem('ray_chat_user');
+    }
+  }
+
   const roomsRef = dbRef(db, 'rooms');
   onValue(roomsRef, (snapshot) => {
     rooms.value = snapshot.val() || {};
@@ -278,6 +391,18 @@ onUnmounted(() => {
 
 <style scoped>
 .chat-container { max-width: 500px; margin: 40px auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+
+/* Auth Styles */
+.auth-box { display: flex; flex-direction: column; gap: 15px; }
+.auth-tabs { display: flex; border-bottom: 2px solid #ccc; }
+.auth-tabs button { flex: 1; background: none; color: #333; border: none; padding: 10px; font-weight: bold; border-radius: 0; }
+.auth-tabs button.active { border-bottom: 3px solid #007bff; color: #007bff; }
+.auth-form { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+
+/* Profile Header */
+.user-profile-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; background: #f8f9fa; padding: 10px; border-radius: 6px; }
+.logout-btn { background-color: #dc3545; font-size: 12px; }
+
 .messages { height: 320px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; border-radius: 4px; display: flex; flex-direction: column; }
 .message { margin-bottom: 12px; text-align: left; }
 .own { text-align: right; color: #007bff; }
