@@ -305,11 +305,23 @@ const leaveRoom = () => {
   currentRoom.value = null;
   messages.value = [];
   selectedFile.value = null;
+  
+  // Burahin ang saved room kapag kusa mong pinoz-pindot ang "Leave Room"
+  localStorage.removeItem('ray_chat_active_room');
 };
+const listenToRoomMessages = (roomId, roomName, createdBy, password = '') => {
+  currentRoom.value = { id: roomId, name: roomName, createdBy, password };
+  
+  // I-save ang kasalukuyang room sa localStorage
+  localStorage.setItem('ray_chat_active_room', JSON.stringify({
+    id: roomId,
+    name: roomName,
+    createdBy: createdBy,
+    password: password
+  }));
 
-const listenToRoomMessages = (roomId, roomName, createdBy) => {
-  currentRoom.value = { id: roomId, name: roomName, createdBy };
   const messagesRef = dbRef(db, `rooms/${roomId}/messages`);
+  initialRoomLoad = true;
   
   messagesListener = onValue(messagesRef, (snapshot) => {
     const data = snapshot.val();
@@ -319,7 +331,16 @@ const listenToRoomMessages = (roomId, roomName, createdBy) => {
         list.push({ id: key, ...data[key] });
       });
     }
+
+    if (!initialRoomLoad && list.length > messages.value.length) {
+      const newestMsg = list[list.length - 1];
+      if (newestMsg.user !== currentUser.value.username) {
+        triggerNotification(newestMsg.user, newestMsg.text);
+      }
+    }
+
     messages.value = list;
+    initialRoomLoad = false;
   });
 };
 
@@ -366,13 +387,21 @@ const sendMessage = () => {
 };
 
 onMounted(() => {
-  // Auto-login from localStorage if session exists
   const savedUser = localStorage.getItem('ray_chat_user');
   if (savedUser) {
     try {
       currentUser.value = JSON.parse(savedUser);
+      requestNotificationPermission();
+
+      // Subukang i-rejoin ang huling nakasave na room
+      const savedRoom = localStorage.getItem('ray_chat_active_room');
+      if (savedRoom) {
+        const roomData = JSON.parse(savedRoom);
+        listenToRoomMessages(roomData.id, roomData.name, roomData.createdBy, roomData.password);
+      }
     } catch (e) {
       localStorage.removeItem('ray_chat_user');
+      localStorage.removeItem('ray_chat_active_room');
     }
   }
 
