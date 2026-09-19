@@ -186,22 +186,22 @@ let initialRoomLoad = true;
 
 // Request Permission
 const requestNotificationPermission = async () => {
-  try {
-    // 1. Native Capacitor Permission
+ try {
     if (window.Capacitor && window.Capacitor.isNativePlatform()) {
-      const status = await LocalNotifications.requestPermissions();
-      if (status.display === 'granted') {
-        await LocalNotifications.createChannel({
-          id: 'chat_messages',
-          name: 'Chat Messages',
-          description: 'Notifications for new chat messages',
-          importance: 5,
-          visibility: 1,
-          vibration: true
-        });
-      }
+      // 1. Humingi ng permiso sa Android OS
+      const perm = await LocalNotifications.requestPermissions();
+      
+      // 2. Gumawa ng High-Priority Channel para sa Android
+      await LocalNotifications.createChannel({
+        id: 'ray_chat_channel',
+        name: 'Ray Chat Notifications',
+        description: 'Notifications for incoming chat messages',
+        importance: 5, // High Importance = Pop-up banner sa ibabaw ng screen
+        visibility: 1, // Visible sa lockscreen
+        vibration: true,
+        sound: 'beep.wav'
+      });
     } else if ('Notification' in window && Notification.permission !== 'granted') {
-      // 2. Standard Web Notification Permission
       await Notification.requestPermission();
     }
   } catch (e) {
@@ -215,23 +215,24 @@ const triggerNotification = async (sender, text) => {
   const bodyText = text || 'Sent an attachment';
 
   try {
-    // Subukan muna gamit ang Capacitor LocalNotifications (Android Native)
     if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+      // Para sa Android App
       await LocalNotifications.schedule({
         notifications: [
           {
             title: title,
             body: bodyText,
-            id: Date.now(),
-            channelId: 'chat_messages',
-            schedule: { at: new Date(Date.now() + 50) },
+            id: new Date().getTime(),
+            channelId: 'ray_chat_channel', // Nagmamatch sa id sa itaas
+            schedule: { at: new Date(Date.now() + 100) }, // Magse-send agad sa loob ng 100ms
+            sound: null,
             actionTypeId: '',
             extra: null
           }
         ]
       });
     } else if ('Notification' in window && Notification.permission === 'granted') {
-      // Web Notification Fallback
+      // Para sa Web Browser
       new Notification(title, { body: bodyText });
     }
   } catch (e) {
